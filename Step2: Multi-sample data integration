@@ -1,0 +1,313 @@
+Step2: Multi-sample data integration
+
+###### This step takes an enormous amount of computing resources and time (2-4 days!)
+###### It is highly recommended to run this pipeline on HPC
+
+
+#### set up a slurm code
+
+#!/bin/bash
+#SBATCH --job-name="18012023_quick_integration_2"
+#SBATCH --mail-user=wittaya.hpc.cluster@gmail.com
+#SBATCH --mail-type=ALL
+#SBATCH --ntasks=1
+#SBATHC --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=600G
+#SBATCH --nodes=1
+#SBATCH --time=7-00:00:00
+#SBATCH --output=18012023_quick_integration_2.out
+
+date
+
+module load R/4.0.5
+cd ~/rb32/wsuw0002/snrna_postmortem/integration/18012023_quick_integration
+Rscript --vanilla 18012023_quick_integration_2.R
+
+
+#### set up an R script
+
+#####################load libraries
+#####################
+#####################
+#####################
+library(DoubletFinder)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(SeuratDisk)
+library(scater)
+library(tidyverse)
+library(cowplot)
+library(Matrix.utils)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+
+######################load seurat objects
+######################
+######################
+######################
+PMT.filename <- list.files(path="~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/rawdata")
+PMT.filename <- mixedsort(PMT.filename)
+
+analysed.seurat.object.list <- list()
+for (i in PMT.filename) {
+  analysed.seurat.object.list[[i]] <- LoadH5Seurat(paste0("~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/h5seurat/",i,".h5Seurat"))
+}
+
+######################assign names, conditions to seurat objects
+######################
+######################
+######################
+
+
+#samplenames
+analysed.seurat.object.list[["PMT_3"]]$samplename <- "PMT3"                                                                                                                                                                                $
+analysed.seurat.object.list[["PMT_5"]]$samplename <- "PMT5"
+analysed.seurat.object.list[["PMT_7"]]$samplename <- "PMT7"
+analysed.seurat.object.list[["PMT_9"]]$samplename <- "PMT9"
+analysed.seurat.object.list[["PMT_10"]]$samplename <- "PMT10"
+
+#conditions
+analysed.seurat.object.list[["PMT_3"]]$condition <- "mdd"
+analysed.seurat.object.list[["PMT_5"]]$condition <- "schizo"
+analysed.seurat.object.list[["PMT_7"]]$condition <- "mdd"
+analysed.seurat.object.list[["PMT_9"]]$condition <- "mdd"
+analysed.seurat.object.list[["PMT_10"]]$condition <- "mdd"
+
+#subcondition
+analysed.seurat.object.list[["PMT_3"]]$subcondition <- "mddlbtc"
+analysed.seurat.object.list[["PMT_5"]]$subcondition <- "schizolbtc"
+analysed.seurat.object.list[["PMT_7"]]$subcondition <- "mddbbtc"
+analysed.seurat.object.list[["PMT_9"]]$subcondition <- "mddbbtc"
+analysed.seurat.object.list[["PMT_10"]]$subcondition <- "mddbbtc"
+
+#btcprofile
+analysed.seurat.object.list[["PMT_3"]]$btcprofile <- "low"
+analysed.seurat.object.list[["PMT_5"]]$btcprofile <- "low"
+analysed.seurat.object.list[["PMT_7"]]$btcprofile <- "base"
+analysed.seurat.object.list[["PMT_9"]]$btcprofile <- "base"
+analysed.seurat.object.list[["PMT_10"]]$btcprofile <- "base"
+
+#prepbatch
+analysed.seurat.object.list[["PMT_3"]]$prepbatch <- "prepbatch20"
+analysed.seurat.object.list[["PMT_5"]]$prepbatch <- "prepbatch01"
+analysed.seurat.object.list[["PMT_7"]]$prepbatch <- "prepbatch15"
+analysed.seurat.object.list[["PMT_9"]]$prepbatch <- "prepbatch11"
+analysed.seurat.object.list[["PMT_10"]]$prepbatch <- "prepbatch05"
+
+#seqbatch
+analysed.seurat.object.list[["PMT_3"]]$seqbatch <- "seqbatch07"
+analysed.seurat.object.list[["PMT_5"]]$seqbatch <- "seqbatch01"
+analysed.seurat.object.list[["PMT_7"]]$seqbatch <- "seqbatch04"
+analysed.seurat.object.list[["PMT_9"]]$seqbatch <- "seqbatch03"
+analysed.seurat.object.list[["PMT_10"]]$seqbatch <- "seqbatch05"
+
+###filter datasets
+for (i in PMT.filename) {
+  analysed.seurat.object.list[[i]] <- subset(analysed.seurat.object.list[[i]], subset = nFeature_RNA > 200 & percent.mt < 5 & multiplet == 'Singlet')
+}
+
+# normalize and identify variable features for each dataset independently
+analysed.seurat.object.list <- lapply(X = analysed.seurat.object.list, FUN = function(x) {
+  x <- NormalizeData(x, verbose = FALSE)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+})
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = analysed.seurat.object.list)
+
+analysed.seurat.object.list <- lapply(X = analysed.seurat.object.list, FUN = function(x){
+  x <- ScaleData(x, features = features, verbose = FALSE)
+  x <- RunPCA(x, features = features, verbose = FALSE)
+})
+
+anchors <- FindIntegrationAnchors(object.list = analysed.seurat.object.list, reduction = "rpca", reference = c(23,25))
+
+# this command creates an 'integrated' data assay
+sc.data.filtered <- IntegrateData(anchorset = anchors)
+
+sc.data.filtered <- ScaleData(sc.data.filtered, verbose = FALSE)
+sc.data.filtered <- RunPCA(sc.data.filtered, verbose = FALSE)
+sc.data.filtered <- RunUMAP(sc.data.filtered, dims = 1:50)
+
+
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(sc.data.filtered) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+sc.data.filtered <- ScaleData(sc.data.filtered, verbose = FALSE)
+sc.data.filtered <- RunPCA(sc.data.filtered, npcs = 30, verbose = FALSE)
+sc.data.filtered <- RunUMAP(sc.data.filtered, reduction = "pca", dims = 1:30)
+sc.data.filtered <- FindNeighbors(sc.data.filtered, reduction = "pca", dims = 1:30)
+sc.data.filtered <- FindClusters(sc.data.filtered, resolution = 0.5)
+
+
+#####################Get UMAP plot
+#####################
+#####################
+#####################
+#umap
+pdf(file = "integrated.extra_umap_scType.pdf", width = 15, height = 13)
+print(DimPlot(sc.data.filtered, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'customclassif'))
+dev.off()
+
+pdf(file = "integrated.extra_umap_label.pdf", width = 15, height = 13)
+print(DimPlot(sc.data.filtered, reduction = "umap", label = TRUE, repel = TRUE))
+dev.off()
+
+pdf(file = "integrated.extra_umap_not_label.pdf", width = 15, height = 13)
+print(DimPlot(sc.data.filtered, reduction = "umap"))
+dev.off()
+
+pdf(file = "integrated.extra_umap_sampleplot.pdf", width = 15, height = 13)
+print(DimPlot(sc.data.filtered, reduction = "umap", group.by = 'orig.ident'))
+dev.off()
+
+pdf(file = "integrated.condition.extra_umap_sampleplot.pdf", width = 10, height = 4)
+DimPlot(sc.data.filtered, reduction = "umap", split.by = "condition", label = FALSE, repel = FALSE)
+dev.off()
+
+pdf(file = "integrated.subcondition.extra_umap_sampleplot.pdf", width = 15, height = 5)
+DimPlot(sc.data.filtered, reduction = "umap", split.by = "subcondition")
+dev.off()
+
+
+##Change defaultassay to RNA for visualisation
+DefaultAssay(sc.data.filtered) <- "RNA"
+
+#Featureplot
+pdf(file = "sc.data.filtered_FeaturePlot_SP1_HSP90AA1_HSP90AB1_RBFOX3.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("SP1", "HSP90AA1", "HSP90AB1","RBFOX3"), cols = c("grey", "brown2")))                                                                                                                     $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_EGFR_ERBB2_ERBB3_ERBB4.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("EGFR", "ERBB2", "ERBB3", "ERBB4"), cols = c("grey", "brown2")))                                                                                                                          $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_EGF_BTC_TGFA_AREG.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("EGF", "BTC", "TGFA", "AREG"), cols = c("grey", "brown2")))                                                                                                                               $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_EREG_EPGN_HBEGF_AREG.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("EREG", "EPGN", "HBEGF", "AREG"), cols = c("grey", "brown2")))                                                                                                                            $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_NRG1_NRG2_NRG3_NRG4.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("NRG1", "NRG2", "NRG3", "NRG4"), cols = c("grey", "brown2")))                                                                                                                             $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_JUN_FOS_MYC_EGR1.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("JUN", "FOS", "MYC", "EGR1"), cols = c("grey", "brown2")))                                                                                                                                $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_RELN_HTR2C_THSD7B_CHST9.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("RELN", "HTR2C", "THSD7B","CHST9"), cols = c("grey", "brown2")))
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_MLIP_SV2B_FSTL4_CRACDL.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("MLIP", "SV2B", "FSTL4","CRACDL"), cols = c("grey", "brown2")))                                                                                                                           $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_OLFM3_TAFA1_NWD2_FAT3.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("OLFM3", "TAFA1", "NWD2","FAT3"), cols = c("grey", "brown2")))                                                                                                                            $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_GAP43_GAD1_GAD2_GABRD.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("GAP43", "GAD1", "GAD2","GABRD"), cols = c("grey", "brown2")))                                                                                                                            $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_PVALB_DRD1_DRD2_DRD3.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("PVALB", "DRD1", "DRD2","DRD3"), cols = c("grey", "brown2")))                                                                                                                             $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_DRD4_DRD5_CCK_VIP.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("DRD4", "DRD5", "CCK","VIP"), cols = c("grey", "brown2")))                                                                                                                                $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_SPI1_MRC1_TMEM119_CX3CR1_macrophage_microglia.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("SPI1","MRC1","TMEM119","CX3CR1"), cols = c("grey", "brown2")))                                                                                                                           $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_CLDN5_VTN_endothelial_cells.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("CLDN5","VTN"), cols = c("grey", "brown2")))                                                                                                                                              $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_GLUL_SOX9_AQP4_GJA1_astrocytes.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("GLUL", "SOX9", "AQP4", "GJA1"), cols = c("grey", "brown2")))                                                                                                                             $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_NDRG2_GFAP_ALDH1A1_ALDH1L1_VIM_astrocytes.pdf", width = 6, height = 7)
+print(FeaturePlot(sc.data.filtered, features = c("NDRG2", "GFAP", "ALDH1A1", "ALDH1L1", "VIM"), cols = c("grey", "brown2")))                                                                                                               $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_SATB2_SLC17A7_SLC17A6_Ex_neurons.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("SATB2", "SLC17A7", "SLC17A6"), cols = c("grey", "brown2")))                                                                                                                              $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_SNAP25_STMN2_RBFOX3_neurons.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("SNAP25","STMN2","RBFOX3"), cols = c("grey", "brown2")))                                                                                                                                  $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_layer3_GLRA3,layer2_3_LAMP5_CARTPT.pdf", width = 6, height = 7)
+print(FeaturePlot(sc.data.filtered, features = c("GLRA3","LAMP5","CARTPT", "CUX2", "THSD7A"), cols = c("grey", "brown2")))                                                                                                                 $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_layers2_RASGRF2_layer3_4_PRSS12_layer4_5_RORB_layers4_6_GRIK4.pdf",  width = 7, height =6)
+print(FeaturePlot(sc.data.filtered, features = c("RASGRF2","PRSS12", "RORB", "GRIK4"), cols = c("grey", "brown2")))                                                                                                                        $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_layer5_KCNK2_SULF2_PCP4_HTR2C_FEZF2.pdf",  width = 6, height = 7)
+print(FeaturePlot(sc.data.filtered, features = c("KCNK2", "SULF2", "PCP4", "HTR2C", "FEZF2"), cols = c("grey", "brown2")))                                                                                                                 $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_layer6_SYT6_OPRK1_NR4A2_SYNPR_TLE_NTNG2_ADRA2A.pdf",  width = 6, height = 7)
+print(FeaturePlot(sc.data.filtered, features = c("SYT6", "OPRK1", "NR4A2", "SYNPR", "TLE", "NTNG2", "ADRA2A"), cols = c("grey", "brown2")))                                                                                                $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_layer4_5_TOX_ETV1_RXFP1_FOXP2.pdf",  width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("TOX", "ETV1", "RXFP1", "FOXP2"), cols = c("grey", "brown2")))                                                                                                                            $
+dev.off()
+
+pdf(file = "sc.data.filtered_FeaturePlot_GAD1_GAD2_SLC32A1_Inhibitory_neurons.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("GAD1", "GAD2", "SLC32A1"), cols = c("grey", "brown2")))                                                                                                                                  $
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_PLP1_MAG_MOG_oligodendrocyte.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("PLP1", "MAG", "MOG"), cols = c("grey", "brown2")))                                                                                                                                       $
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_MOBP_MBP_oligodendrocyte.pdf", width = 6, height = 3)
+print(FeaturePlot(sc.data.filtered, features = c("MOBP", "MBP"), cols = c("grey", "brown2")))                                                                                                                                              $
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_PTGDS_PDGFRA_PCDH15_OPC.pdf", width = 7, height = 6)
+print(FeaturePlot(sc.data.filtered, features = c("PTGDS", "PDGFRA", "PCDH15"), cols = c("grey", "brown2")))                                                                                                                                $
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_OLIG2_OLIG1_OPC.pdf", width = 6, height = 3)
+print(FeaturePlot(sc.data.filtered, features = c("OLIG2", "OLIG1"), cols = c("grey", "brown2")))                                                                                                                                           $
+dev.off()
+
+##save seurat datasets
+SaveH5Seurat(sc.data.filtered, filename = "integrated.extra.h5Seurat")
+
+
+
+
+
