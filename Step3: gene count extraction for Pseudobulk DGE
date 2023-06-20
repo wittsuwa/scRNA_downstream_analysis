@@ -24,5 +24,296 @@ module load R/4.0.5
 cd ~/rb32/wsuw0002/snrna_postmortem/integration/18012023_quick_integration/rawcount
 Rscript --vanilla 080223_analysis.R
 
+#######end
 
+
+#### set up an R script
+
+#####################load libraries
+#####################
+#####################
+#####################
+library(DoubletFinder)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(SeuratDisk)
+library(scater)
+library(tidyverse)
+library(cowplot)
+library(Matrix.utils)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+library(harmony)
+######################load seurat objects
+######################
+######################
+######################
+
+sc.data.filtered <- LoadH5Seurat(paste0("~/rb32/wsuw0002/snrna_postmortem/integration/18012023_quick_integration/09012023_integrated.extra.h5Seurat"))
+#find markers for every cluster compared to all remaining cells, report only the positive ones                                                                                                                                             $
+sc.data.filtered <- FindAllMarkers(sc.data.filtered, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+
+newcelltypes <- c("Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Astrocyte",
+                  "OPC",
+                  "Microglial_cell",
+                  "Ex2",
+                  "Ex2",
+                  "Ex4",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "Ex2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Ex4",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Astrocyte",
+                  "Ex6",
+                  "Ex5",
+                  "In2",
+                  "Astrocyte",
+                  "Microglial_cell",
+                  "Oligodendrocyte",
+                  "In6",
+                  "Endothelial_cell",
+                  "Microglial_cell",
+                  "Microglial_cell",
+                  "OPC",
+                  "Ex4",
+                  "Ex4","Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte")
+
+names(newcelltypes) <- levels(sc.data.filtered)
+sc.data.filtered <- RenameIdents(sc.data.filtered, newcelltypes)
+sc.data.filtered[["old.ident"]] <- Idents(object = sc.data.filtered)
+
+#set new levels
+my_levels <- c('Astrocyte', 'Endothelial_cell', 'Microglial_cell', 'Oligodendrocyte', 'OPC', 'Ex2', 'Ex4', 'Ex5', 'Ex6', "In2", 'In6')
+Idents(sc.data.filtered) <- factor(Idents(sc.data.filtered), levels= my_levels)
+##successfully set new levels
+
+#umap
+pdf(file = "sc.data.filtered.diff.merge.extra_umap_new_integration.pdf", width = 8, height = 6)
+print(DimPlot(sc.data.filtered, reduction = "umap", label = TRUE, group.by = 'old.ident', raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered.diff.merge.extra_umap_new_integration.pdf", width = 8, height = 6)
+print(DimPlot(sc.data.filtered, reduction = "umap", label = FALSE, group.by = 'old.ident', raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered.diff.merge.extra_umap_label_new_integration.pdf", width = 10, height = 8)
+print(DimPlot(sc.data.filtered, reduction = "umap", label = TRUE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered.diff.merge.extra_umap_not_label_new_integration.pdf", width = 10, height = 8)
+print(DimPlot(sc.data.filtered, reduction = "umap", raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered.diff.merge.extra_umap_sampleplot_new_integration.pdf", width = 15, height = 13)
+print(DimPlot(sc.data.filtered, reduction = "umap", group.by = 'orig.ident', raster=FALSE))
+dev.off()
+
+##Change defaultassay to RNA for visualisation
+DefaultAssay(sc.data.filtered) <- "RNA"
+
+#####################assign conditions, subconditions and btcprofiles
+#####################
+#####################
+#####################
+sc.data.filtered$samples.condition <- paste0(sc.data.filtered$condition, sc.data.filtered$samplename)
+sc.data.filtered$samples.subcondition <- paste0(sc.data.filtered$subcondition, sc.data.filtered$samplename)
+sc.data.filtered$samples.btcprofile <- paste0(sc.data.filtered$btcprofile, sc.data.filtered$samplename)
+sc.data.filtered$samples.prepbatch <- paste0(sc.data.filtered$prepbatch, sc.data.filtered$samplename)
+sc.data.filtered$samples.seqbatch <- paste0(sc.data.filtered$seqbatch, sc.data.filtered$samplename)
+
+#####################just conditions
+#####################
+#####################
+#####################
+rawcount.condition <- AggregateExpression(sc.data.filtered,
+                                          group.by = "samples.condition",
+                                          assays = 'RNA',
+                                          slot = "counts",
+                                          return.seurat = FALSE)
+rawcount.condition.data <- data.frame(rawcount.condition)
+write.csv(rawcount.condition.data, file = "rawcount.condition.data.csv")
+
+###################celltypes and condition
+###################
+###################
+###################
+rawcount.condition.celltype <- AggregateExpression(sc.data.filtered, group.by = c("old.ident", "samples.condition"), assays = 'RNA', slot = "counts", return.seurat = FALSE)
+rawcount.condition.celltype.data <- data.frame(rawcount.condition.celltype)
+write.csv(rawcount.condition.celltype.data, file = "rawcount.condition.celltype.data.csv")
+
+rawcount.condition.celltype.cluster <- AggregateExpression(sc.data.filtered, group.by = c("seurat_clusters", "samples.condition"), assays = 'RNA', slot = "counts", return.seurat = FALSE)
+rawcount.condition.celltype.cluster.data <- data.frame(rawcount.condition.celltype.cluster)
+write.csv(rawcount.condition.celltype.cluster.data, file = "rawcount.condition.celltype.cluster.data.csv")
+
+
+cell_plot1 <- DimPlot(sc.data.filtered, reduction = 'umap', group.by = 'customclassif', label = TRUE, raster=FALSE)
+cell_plot2 <- DimPlot(sc.data.filtered, reduction = 'umap', group.by = 'old.ident', label = TRUE, raster=FALSE)
+cell_plot3 <- FeaturePlot(sc.data.filtered, features = c("RBFOX3", "GFAP"), reduction = "umap", pt.size = 0.2, blend = TRUE, blend.threshold = 0.1, order = T)
+
+pdf(file = paste0("more_celltypes_merged_extra_sample_scType_new_celltypes.pdf"), width = 30, height = 12)
+print(cell_plot1 + cell_plot2)
+dev.off()
+
+pdf(file = paste0("more_celltypes_merged_extra_sample_NeuN_GFAP.pdf"), width = 30, height = 12)
+print(FeaturePlot(sc.data.filtered, features = c("RBFOX3", "GFAP"), reduction = "umap", pt.size = 0.2, blend = TRUE, blend.threshold = 0.1, order = T))
+dev.off()
+
+##Vlnplot and Featureplot
+#vlnplot
+pdf(file = "sc.data.filtered_vlnplot_SP1_HSP90AA1_HSP90AB1_RBFOX3.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("SP1", "HSP90AA1", "HSP90AB1","RBFOX3"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_EGFR_ERBB2_ERBB3_ERBB4.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("EGFR", "ERBB2", "ERBB3", "ERBB4"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_EGF_BTC_TGFA_AREG.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("EGF", "BTC", "TGFA", "AREG"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_EREG_EPGN_HBEGF_AREG.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("EREG", "EPGN", "HBEGF", "AREG"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_NRG1_NRG2_NRG3_NRG4.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("NRG1", "NRG2", "NRG3", "NRG4"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_JUN_FOS_MYC_EGR1.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("JUN", "FOS", "MYC", "EGR1"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_RELN_HTR2C_THSD7B_CHST9.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("RELN", "HTR2C", "THSD7B","CHST9"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_MLIP_SV2B_FSTL4_CRACDL.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("MLIP", "SV2B", "FSTL4","CRACDL"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_OLFM3_TAFA1_NWD2_FAT3.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("OLFM3", "TAFA1", "NWD2","FAT3"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_GAP43_GAD1_GAD2_GABRD.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("GAP43", "GAD1", "GAD2","GABRD"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_PVALB_DRD1_DRD2_DRD3.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("PVALB", "DRD1", "DRD2","DRD3"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_DRD4_DRD5_CCK_VIP.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("DRD4", "DRD5", "CCK","VIP"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_SPI1_MRC1_TMEM119_CX3CR1_macrophage_microglia.pdf", width = 15, height = 8)
+print(VlnPlot(sc.data.filtered, features = c("SPI1","MRC1","TMEM119","CX3CR1"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_CLDN5_VTN_endothelial_cells.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("CLDN5","VTN"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_GLUL_SOX9_AQP4_GJA1_astrocytes.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("GLUL", "SOX9", "AQP4", "GJA1"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_NDRG2_GFAP_ALDH1A1_ALDH1L1_astrocytes.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("NDRG2", "GFAP", "ALDH1A1", "ALDH1L1"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_SATB2_SLC17A7_SLC17A6_Ex_neurons_VIM_astrocyte.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("SATB2", "SLC17A7", "SLC17A6", "VIM"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_SNAP25_STMN2_RBFOX3_neurons_layer3_GLRA3.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("SNAP25","STMN2","RBFOX3"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_layer2_3_LAMP5_CARTPT_CUX2_THSD7A.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("LAMP5","CARTPT", "CUX2", "THSD7A"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_layer2_RASGRF2_layer3_4_PRSS12_layer4_5_RORB_layers4_6_GRIK4.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("RASGRF2","PRSS12", "RORB", "GRIK4"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_layer5_KCNK2_SULF2_PCP4_HTR2C.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("KCNK2", "SULF2", "PCP4", "HTR2C"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_layer5_FEZF2_layer_6_TLE_NTNG2_ADRA2A.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("FEZF2","TLE", "NTNG2", "ADRA2A"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+#vlnplot
+pdf(file = "sc.data.filtered_vlnplot_PLP1_MAG_MOG_oligodendrocyte.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("PLP1", "MAG", "MOG"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_MOBP_MBP_oligodendrocyte.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("MOBP", "MBP"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_PTGDS_PDGFRA_PCDH15_OPCs.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("PTGDS", "PDGFRA", "PCDH15"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_vlnplot_OLIG2_OLIG1_OPCs.pdf", width = 15, height = 10)
+print(VlnPlot(sc.data.filtered, features = c("OLIG2", "OLIG1"), ncol = 2, pt.size = FALSE, raster=FALSE))
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_PLP1_MAG_MOG_oligodendrocyte.pdf", width = 15, height = 10)
+print(FeaturePlot(sc.data.filtered, features = c("PLP1", "MAG", "MOG")))
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_MOBP_MBP_oligodendrocyte.pdf", width = 15, height = 10)                                                                                                                                          $
+print(FeaturePlot(sc.data.filtered, features = c("MOBP", "MBP")))
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_PTGDS_PDGFRA_PCDH15_OPC.pdf", width = 15, height = 10)
+print(FeaturePlot(sc.data.filtered, features = c("PTGDS", "PDGFRA", "PCDH15")))
+dev.off()
+
+pdf(file = "sc.data.filtered_feature_plot_OLIG2_OLIG1_OPC.pdf", width = 15, height = 10)
+print(FeaturePlot(sc.data.filtered, features = c("OLIG2", "OLIG1")))
+dev.off()
 
