@@ -1,0 +1,274 @@
+Step4.1: Differential gene expression (DGE) analysis using Pseudobulk method
+
+###This set of code only focuses on DGE analysis of interneuron subtypes
+###This set of code can be run in R or RStudio
+
+#####################load libraries
+#####################
+library(DoubletFinder)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(SeuratDisk)
+library(scater)
+library(tidyverse)
+library(cowplot)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+library(wesanderson)
+library(ggrepel)
+library(scCATCH)
+library(clusterProfiler)
+library("org.Hs.eg.db")
+getOption("clusterProfiler.download.method")
+library(R.utils)
+R.utils::setOption("clusterProfiler.download.method","auto")
+
+
+#cell type
+sc.data.celltype.pvalb <- read.csv(paste0("//ad.monash.edu/home/User057/wsuw0002/Documents/Data Analysis/Single-nuclei RNA seq/integration/gender_as_reference/DGE/group/inhibitory_neuron/rawcount.condition.celltype.pvalb.data.csv"), row.names = 1)
+
+celltype.pvalb <- c('In2_pvalb', 'In6_pvalb')
+sc.data.celltype.pvalb_list <- list()
+for (i in celltype.pvalb) {
+  sc.data.celltype.pvalb_list[[i]] <- sc.data.celltype.pvalb%>%
+    dplyr::select(contains(i))
+  
+}
+
+metadata.celltype.pvalb <- read.csv(paste0("//ad.monash.edu/home/User057/wsuw0002/Documents/Data Analysis/Single-nuclei RNA seq/integration/gender_as_reference/DGE/group/inhibitory_neuron/metadata_pvalb.csv"))
+metadata.celltype.pvalb_list <- list()
+for (i in celltype.pvalb) {
+  metadata.celltype.pvalb_list[[i]] <- filter(metadata.celltype.pvalb, grepl(i, samples))
+}
+
+#####colData.condition.celltype.pvalb_list <- list()
+dds.condition.celltype.pvalb_list <- list()
+keep.condition.celltype.pvalb_list <- list()
+resultsNames.condition.celltype.pvalb_list <- list()
+
+for (i in celltype.pvalb) {
+  metadata.celltype.pvalb_list[[i]]$condition <- factor(metadata.celltype.pvalb_list[[i]]$condition)
+  metadata.celltype.pvalb_list[[i]]$btcprofile <- factor(metadata.celltype.pvalb_list[[i]]$btcprofile)
+    metadata.celltype.pvalb_list[[i]]$group <- factor(paste0(metadata.celltype.pvalb_list[[i]]$condition, metadata.celltype.pvalb_list[[i]]$btcprofile))
+}
+
+for (i in celltype.pvalb) {
+  dds.condition.celltype.pvalb_list[[i]] <- DESeqDataSetFromMatrix(countData = sc.data.celltype.pvalb_list[[i]],
+                                                             colData = metadata.celltype.pvalb_list[[i]],
+                                                             design = ~group)
+  keep.condition.celltype.pvalb_list[[i]] <- rowSums(counts(dds.condition.celltype.pvalb_list[[i]])) >=10
+  dds.condition.celltype.pvalb_list[[i]] <- dds.condition.celltype.pvalb_list[[i]][keep.condition.celltype.pvalb_list[[i]],]
+  dds.condition.celltype.pvalb_list[[i]] <- DESeq(dds.condition.celltype.pvalb_list[[i]], useT = TRUE, minReplicatesForReplace = Inf, minmu = 1e-6)
+  resultsNames.condition.celltype.pvalb_list[[i]] <- resultsNames(dds.condition.celltype.pvalb_list[[i]])
+}
+
+count.pvalb_list <- list()
+count.pvalb.dat_list <- list()
+for (i in celltype.pvalb) {
+  count.pvalb_list[[i]] <- counts(dds.condition.celltype.pvalb_list[[i]], normalized=TRUE)
+  count.pvalb.dat_list[[i]] <- data.frame(count.pvalb_list[[i]])
+  count.pvalb.dat_list[[i]] <- dplyr::left_join(count.pvalb.dat_list[[i]] %>% mutate(name = rownames(count.pvalb.dat_list[[i]])),
+                                          res_name_genenames, by = "name")
+  write.csv(count.pvalb.dat_list[[i]], file = paste0(i,"_normalised_counts.csv"))
+}
+count.pvalb <- do.call(rbind, cbind(count.pvalb_list))
+
+
+res.group_schizobase_vs_controlbase_list <- list()
+res.group_schizobase_vs_controlbase.dat_list <- list()
+resSig.group_schizobase_vs_controlbase_list <- list()
+resSig.group_schizobase_vs_controlbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_schizobase_vs_controlbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "schizobase", "controlbase"))
+  res.group_schizobase_vs_controlbase.dat_list[[i]] <- data.frame(res.group_schizobase_vs_controlbase_list[[i]])
+  res.group_schizobase_vs_controlbase.dat_list[[i]] <- dplyr::left_join(res.group_schizobase_vs_controlbase.dat_list[[i]] %>%
+                                                                          mutate(name = rownames(res.group_schizobase_vs_controlbase.dat_list[[i]])),
+                                                                        res_name_genenames, by = "name")
+  write.csv(res.group_schizobase_vs_controlbase.dat_list[[i]], file = paste0(i,"_res.group_schizobase_vs_controlbase.csv"))
+  resSig.group_schizobase_vs_controlbase_list[[i]] <- subset(res.group_schizobase_vs_controlbase_list[[i]], padj < 0.05)
+  resSig.group_schizobase_vs_controlbase.dat_list[[i]] <- data.frame(resSig.group_schizobase_vs_controlbase_list[[i]])
+  resSig.group_schizobase_vs_controlbase.dat_list[[i]] <- dplyr::left_join(resSig.group_schizobase_vs_controlbase.dat_list[[i]] %>%
+                                                                             mutate(name = rownames(resSig.group_schizobase_vs_controlbase.dat_list[[i]])),
+                                                                           res_name_genenames, by = "name")
+  write.csv(resSig.group_schizobase_vs_controlbase.dat_list[[i]], file = paste0(i,"_resSig.group_schizobase_vs_controlbase.csv"))
+}
+
+
+res.group_schizolow_vs_controlbase_list <- list()
+res.group_schizolow_vs_controlbase.dat_list <- list()
+resSig.group_schizolow_vs_controlbase_list <- list()
+resSig.group_schizolow_vs_controlbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_schizolow_vs_controlbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "schizolow", "controlbase"))
+  res.group_schizolow_vs_controlbase.dat_list[[i]] <- data.frame(res.group_schizolow_vs_controlbase_list[[i]])
+  res.group_schizolow_vs_controlbase.dat_list[[i]] <- dplyr::left_join(res.group_schizolow_vs_controlbase.dat_list[[i]] %>%
+                                                                         mutate(name = rownames(res.group_schizolow_vs_controlbase.dat_list[[i]])),
+                                                                       res_name_genenames, by = "name")
+  write.csv(res.group_schizolow_vs_controlbase.dat_list[[i]], file = paste0(i,"_res.group_schizolow_vs_controlbase.csv"))
+  resSig.group_schizolow_vs_controlbase_list[[i]] <- subset(res.group_schizolow_vs_controlbase_list[[i]], padj < 0.05)
+  resSig.group_schizolow_vs_controlbase.dat_list[[i]] <- data.frame(resSig.group_schizolow_vs_controlbase_list[[i]])
+  resSig.group_schizolow_vs_controlbase.dat_list[[i]] <- dplyr::left_join(resSig.group_schizolow_vs_controlbase.dat_list[[i]] %>%
+                                                                            mutate(name = rownames(resSig.group_schizolow_vs_controlbase.dat_list[[i]])),
+                                                                          res_name_genenames, by = "name")
+  write.csv(resSig.group_schizolow_vs_controlbase.dat_list[[i]], file = paste0(i,"_resSig.group_schizolow_vs_controlbase.csv"))
+}
+
+
+res.group_mddbase_vs_controlbase_list <- list()
+res.group_mddbase_vs_controlbase.dat_list <- list()
+resSig.group_mddbase_vs_controlbase_list <- list()
+resSig.group_mddbase_vs_controlbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_mddbase_vs_controlbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "mddbase", "controlbase"))
+  res.group_mddbase_vs_controlbase.dat_list[[i]] <- data.frame(res.group_mddbase_vs_controlbase_list[[i]])
+  res.group_mddbase_vs_controlbase.dat_list[[i]] <- dplyr::left_join(res.group_mddbase_vs_controlbase.dat_list[[i]] %>%
+                                                                       mutate(name = rownames(res.group_mddbase_vs_controlbase.dat_list[[i]])),
+                                                                     res_name_genenames, by = "name")
+  write.csv(res.group_mddbase_vs_controlbase.dat_list[[i]], file = paste0(i,"_res.group_mddbase_vs_controlbase.csv"))
+  resSig.group_mddbase_vs_controlbase_list[[i]] <- subset(res.group_mddbase_vs_controlbase_list[[i]], padj < 0.05)
+  resSig.group_mddbase_vs_controlbase.dat_list[[i]] <- data.frame(resSig.group_mddbase_vs_controlbase_list[[i]])
+  resSig.group_mddbase_vs_controlbase.dat_list[[i]] <- dplyr::left_join(resSig.group_mddbase_vs_controlbase.dat_list[[i]] %>%
+                                                                          mutate(name = rownames(resSig.group_mddbase_vs_controlbase.dat_list[[i]])),
+                                                                        res_name_genenames, by = "name")
+  write.csv(resSig.group_mddbase_vs_controlbase.dat_list[[i]], file = paste0(i,"_resSig.group_mddbase_vs_controlbase.csv"))
+}
+
+
+res.group_mddlow_vs_controlbase_list <- list()
+res.group_mddlow_vs_controlbase.dat_list <- list()
+resSig.group_mddlow_vs_controlbase_list <- list()
+resSig.group_mddlow_vs_controlbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_mddlow_vs_controlbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "mddlow", "controlbase"))
+  res.group_mddlow_vs_controlbase.dat_list[[i]] <- data.frame(res.group_mddlow_vs_controlbase_list[[i]])
+  res.group_mddlow_vs_controlbase.dat_list[[i]] <- dplyr::left_join(res.group_mddlow_vs_controlbase.dat_list[[i]] %>%
+                                                                      mutate(name = rownames(res.group_mddlow_vs_controlbase.dat_list[[i]])),
+                                                                    res_name_genenames, by = "name")
+  write.csv(res.group_mddlow_vs_controlbase.dat_list[[i]], file = paste0(i,"_res.group_mddlow_vs_controlbase.csv"))
+  resSig.group_mddlow_vs_controlbase_list[[i]] <- subset(res.group_mddlow_vs_controlbase_list[[i]], padj < 0.05)
+  resSig.group_mddlow_vs_controlbase.dat_list[[i]] <- data.frame(resSig.group_mddlow_vs_controlbase_list[[i]])
+  resSig.group_mddlow_vs_controlbase.dat_list[[i]] <- dplyr::left_join(resSig.group_mddlow_vs_controlbase.dat_list[[i]] %>%
+                                                                         mutate(name = rownames(resSig.group_mddlow_vs_controlbase.dat_list[[i]])),
+                                                                       res_name_genenames, by = "name")
+  write.csv(resSig.group_mddlow_vs_controlbase.dat_list[[i]], file = paste0(i,"_resSig.group_mddlow_vs_controlbase.csv"))
+}
+
+
+
+res.group_schizolow_vs_schizobase_list <- list()
+res.group_schizolow_vs_schizobase.dat_list <- list()
+resSig.group_schizolow_vs_schizobase_list <- list()
+resSig.group_schizolow_vs_schizobase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_schizolow_vs_schizobase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "schizolow", "schizobase"))
+  res.group_schizolow_vs_schizobase.dat_list[[i]] <- data.frame(res.group_schizolow_vs_schizobase_list[[i]])
+  res.group_schizolow_vs_schizobase.dat_list[[i]] <- dplyr::left_join(res.group_schizolow_vs_schizobase.dat_list[[i]] %>%
+                                                                        mutate(name = rownames(res.group_schizolow_vs_schizobase.dat_list[[i]])),
+                                                                      res_name_genenames, by = "name")
+  write.csv(res.group_schizolow_vs_schizobase.dat_list[[i]], file = paste0(i,"_res.group_schizolow_vs_schizobase.csv"))
+  resSig.group_schizolow_vs_schizobase_list[[i]] <- subset(res.group_schizolow_vs_schizobase_list[[i]], padj < 0.05)
+  resSig.group_schizolow_vs_schizobase.dat_list[[i]] <- data.frame(resSig.group_schizolow_vs_schizobase_list[[i]])
+  resSig.group_schizolow_vs_schizobase.dat_list[[i]] <- dplyr::left_join(resSig.group_schizolow_vs_schizobase.dat_list[[i]] %>%
+                                                                           mutate(name = rownames(resSig.group_schizolow_vs_schizobase.dat_list[[i]])),
+                                                                         res_name_genenames, by = "name")
+  write.csv(resSig.group_schizolow_vs_schizobase.dat_list[[i]], file = paste0(i,"_resSig.group_schizolow_vs_schizobase.csv"))
+}
+
+
+res.group_mddlow_vs_mddbase_list <- list()
+res.group_mddlow_vs_mddbase.dat_list <- list()
+resSig.group_mddlow_vs_mddbase_list <- list()
+resSig.group_mddlow_vs_mddbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_mddlow_vs_mddbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "mddlow", "mddbase"))
+  res.group_mddlow_vs_mddbase.dat_list[[i]] <- data.frame(res.group_mddlow_vs_mddbase_list[[i]])
+  res.group_mddlow_vs_mddbase.dat_list[[i]] <- dplyr::left_join(res.group_mddlow_vs_mddbase.dat_list[[i]] %>%
+                                                                  mutate(name = rownames(res.group_mddlow_vs_mddbase.dat_list[[i]])),
+                                                                res_name_genenames, by = "name")
+  write.csv(res.group_mddlow_vs_mddbase.dat_list[[i]], file = paste0(i,"_res.group_mddlow_vs_mddbase.csv"))
+  resSig.group_mddlow_vs_mddbase_list[[i]] <- subset(res.group_mddlow_vs_mddbase_list[[i]], padj < 0.05)
+  resSig.group_mddlow_vs_mddbase.dat_list[[i]] <- data.frame(resSig.group_mddlow_vs_mddbase_list[[i]])
+  resSig.group_mddlow_vs_mddbase.dat_list[[i]] <- dplyr::left_join(resSig.group_mddlow_vs_mddbase.dat_list[[i]] %>%
+                                                                     mutate(name = rownames(resSig.group_mddlow_vs_mddbase.dat_list[[i]])),
+                                                                   res_name_genenames, by = "name")
+  write.csv(resSig.group_mddlow_vs_mddbase.dat_list[[i]], file = paste0(i,"_resSig.group_mddlow_vs_mddbase.csv"))
+}
+
+
+res.group_schizolow_vs_mddlow_list <- list()
+res.group_schizolow_vs_mddlow.dat_list <- list()
+resSig.group_schizolow_vs_mddlow_list <- list()
+resSig.group_schizolow_vs_mddlow.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_schizolow_vs_mddlow_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "schizolow", "mddlow"))
+  res.group_schizolow_vs_mddlow.dat_list[[i]] <- data.frame(res.group_schizolow_vs_mddlow_list[[i]])
+  res.group_schizolow_vs_mddlow.dat_list[[i]] <- dplyr::left_join(res.group_schizolow_vs_mddlow.dat_list[[i]] %>%
+                                                                    mutate(name = rownames(res.group_schizolow_vs_mddlow.dat_list[[i]])),
+                                                                  res_name_genenames, by = "name")
+  write.csv(res.group_schizolow_vs_mddlow.dat_list[[i]], file = paste0(i,"_res.group_schizolow_vs_mddlow.csv"))
+  resSig.group_schizolow_vs_mddlow_list[[i]] <- subset(res.group_schizolow_vs_mddlow_list[[i]], padj < 0.05)
+  resSig.group_schizolow_vs_mddlow.dat_list[[i]] <- dplyr::left_join(resSig.group_schizolow_vs_mddlow.dat_list[[i]] %>%
+                                                                       mutate(name = rownames(resSig.group_schizolow_vs_mddlow.dat_list[[i]])),
+                                                                     res_name_genenames, by = "name")
+  resSig.group_schizolow_vs_mddlow.dat_list[[i]] <- data.frame(resSig.group_schizolow_vs_mddlow_list[[i]])
+  
+  write.csv(resSig.group_schizolow_vs_mddlow.dat_list[[i]], file = paste0(i,"_resSig.group_schizolow_vs_mddlow.csv"))
+}
+
+res.group_schizobase_vs_mddbase_list <- list()
+res.group_schizobase_vs_mddbase.dat_list <- list()
+resSig.group_schizobase_vs_mddbase_list <- list()
+resSig.group_schizobase_vs_mddbase.dat_list <- list()
+for (i in celltype.pvalb) {
+  res.group_schizobase_vs_mddbase_list[[i]] <- results(dds.condition.celltype.pvalb_list[[i]], contrast = c("group", "schizobase", "mddbase"))
+  res.group_schizobase_vs_mddbase.dat_list[[i]] <- data.frame(res.group_schizobase_vs_mddbase_list[[i]])
+  res.group_schizobase_vs_mddbase.dat_list[[i]] <- dplyr::left_join(res.group_schizobase_vs_mddbase.dat_list[[i]] %>%
+                                                                      mutate(name = rownames(res.group_schizobase_vs_mddbase.dat_list[[i]])),
+                                                                    res_name_genenames, by = "name")
+  write.csv(res.group_schizobase_vs_mddbase.dat_list[[i]], file = paste0(i,"_res.group_schizobase_vs_mddbase.csv"))
+  resSig.group_schizobase_vs_mddbase_list[[i]] <- subset(res.group_schizobase_vs_mddbase_list[[i]], padj < 0.05)
+  resSig.group_schizobase_vs_mddbase.dat_list[[i]] <- data.frame(resSig.group_schizobase_vs_mddbase_list[[i]])
+  resSig.group_schizobase_vs_mddbase.dat_list[[i]] <- dplyr::left_join(resSig.group_schizobase_vs_mddbase.dat_list[[i]] %>%
+                                                                         mutate(name = rownames(resSig.group_schizobase_vs_mddbase.dat_list[[i]])),
+                                                                       res_name_genenames, by = "name")
+  write.csv(resSig.group_schizobase_vs_mddbase.dat_list[[i]], file = paste0(i,"_resSig.group_schizobase_vs_mddbase.csv"))
+}
+
+##Functional analysis
+compare.pvalb_list <- list()
+geneList.pvalb_list <- list()
+gene.pvalb_list <- list()
+for (i in celltype.pvalb) {
+  compare.pvalb_list[[i]] <- data.frame(res.group_schizolow_vs_schizobase.dat_list[[i]])
+  compare.pvalb_list[[i]] <- filter(compare.pvalb_list[[i]], padj < 0.05 & log2FoldChange >0)
+  compare.pvalb_list[[i]] <- drop_na(compare.pvalb_list[[i]])
+  geneList.pvalb_list[[i]] <- compare.pvalb_list[[i]][,2]
+  names(geneList.pvalb_list[[i]]) <- as.character(compare.pvalb_list[[i]][,8])
+  geneList.pvalb_list[[i]] <- sort(geneList.pvalb_list[[i]], decreasing = TRUE)
+  gene.pvalb_list[[i]] <- names(geneList.pvalb_list[[i]])
+}
+xx <- compareCluster(gene.pvalb_list, OrgDb = org.Hs.eg.db, fun = "enrichGO", pvalueCutoff = 1, qvalueCutoff = 1, readable = TRUE)
+xx <- filter(xx, pvalue < 0.05)
+xx <- pairwise_termsim(xx)
+p1 <- emapplot(xx,legend_n =3, pie="equal", cex_line = 0.2, cex_category = 10, cex_label_category =0.4, pie_scale = 10, node_label = "category")
+p2 <- emapplot(xx,legend_n =3, pie="equal", cex_line = 0.2, cex_category = 10, cex_label_category =0.4, pie_scale = 10, node_label = "none")
+p1+p2
+a <- data.frame(xx)
+write.csv(a, file = paste0(i, "high_in_schizolow_compared_to_schizobase.csv"))
+
+emapplot(xx,legend_n =3, pie="equal", cex_line = 0.4, cex_category = 10, cex_label_category =1, pie_scale = 10, node_label = "category")
