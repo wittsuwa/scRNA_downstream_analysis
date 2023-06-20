@@ -1,0 +1,226 @@
+Step4.2: Differential gene expression analysis using zero-inflated statistical model
+
+######## The zero inflated statistal model takes a lot of computing resources and huge amount of time. 
+######## It is recommended to be used when the sample size is small (say 5-10 samples max)
+
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(SeuratDisk)
+library(scater)
+library(tidyverse)
+library(cowplot)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+library(zinbwave)
+library(ggplot2)
+library(Seurat)
+
+######################load seurat objects
+######################
+######################
+######################
+
+sc.data.filtered <- LoadH5Seurat(paste0("~/rb32/wsuw0002/snrna_postmortem/integration/18012023_quick_integration/09012023_integrated.extra.h5Seurat"))
+
+newcelltypes <- c("Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Astrocyte",
+                  "Oligodendrocyte_precursor_cell",
+                  "Microglial_cell",
+                  "Ex2",
+                  "Ex2",
+                  "Ex4",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "Ex2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Ex4",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Astrocyte",
+                  "Ex6",
+                  "Ex5",
+                  "In2",
+                  "Astrocyte",
+                  "Microglial_cell",
+                  "Oligodendrocyte",
+                  "In6",
+                  "Endothelial_cell",
+                  "Microglial_cell",
+                  "Microglial_cell",
+                  "Oligodendrocyte_precursor_cell",
+                  "Ex4",
+                  "Ex4",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte")
+                  
+names(newcelltypes) <- levels(sc.data.filtered)
+sc.data.filtered <- RenameIdents(sc.data.filtered, newcelltypes)
+sc.data.filtered[["old.ident"]] <- Idents(object = sc.data.filtered)
+
+#set new levels
+my_levels <- c('Astrocyte', 'Endothelial_cell', 'Microglial_cell', 'Oligodendrocyte', 'Oligodendrocyte_precursor_cell', 'Ex2', 'Ex4', 'Ex5', 'Ex6', "In2", 'In6')
+Idents(sc.data.filtered) <- factor(Idents(sc.data.filtered), levels= my_levels)
+##successfully set new levels
+
+DefaultAssay(sc.data.filtered) <- "RNA"
+
+#In2 DGE analysis
+sc.data.filtered.In2 <- subset(sc.data.filtered, old.ident == "In2")
+sce.In2 <- as.SingleCellExperiment(sc.data.filtered.In2)
+
+filter.In2 <- rowSums(assay(sce.In2)) >= 50
+table(filter.In2)
+sce.In2 <- sce.In2[filter.In2,]
+sce.In2$condition <- factor(sce.In2$condition)
+
+assayNames(sce.In2)[1] <- "counts"
+zinb.In2 <- zinbFit(sce.In2, K=2, epsilon=2000)
+
+nms.In2 <- c("counts", setdiff(assayNames(sce.In2), "counts"))
+assays(sce.In2) <- assays(sce.In2)[nms.In2]
+assay(sce.In2) <- as.matrix(assay(sce.In2))
+
+sce_zinb.In2 <- zinbwave(sce.In2, fitted_model = zinb.In2, K = 2, epsilon=2000,
+                     observationalWeights = TRUE)
+
+dds.In2 <- DESeqDataSet(sce_zinb.In2, design = ~ condition)
+
+dds.In2 <- DESeq(dds.In2, sfType="poscounts", useT=TRUE, minmu=1e-6)
+
+res.In2.scz_vs_ctl <- results(dds.In2, contrast=c("condition", "schizo", "control"))
+res.In2.scz_vs_ctl.dat <- data.frame(res.In2.scz_vs_ctl)
+write.csv(res.In2.scz_vs_ctl.dat, file = "In2_scz_vs_ctl.csv")
+
+res.In2.mdd_vs_ctl <- results(dds.In2, contrast=c("condition", "mdd", "control"))
+res.In2.mdd_vs_ctl.dat <- data.frame(res.In2.mdd_vs_ctl)
+write.csv(res.In2.mdd_vs_ctl.dat, file = "In2_mdd_vs_ctl.csv")
+
+res.In2.scz_vs_mdd <- results(dds.In2, contrast=c("condition", "schizo", "mdd"))
+res.In2.scz_vs_mdd.dat <- data.frame(res.In2.scz_vs_mdd)
+write.csv(res.In2.scz_vs_mdd.dat, file = "In2_scz_vs_mdd.csv")
+
+#In6 DGE analysis
+sc.data.filtered.In6 <- subset(sc.data.filtered, old.ident == "In6")
+sce.In6 <- as.SingleCellExperiment(sc.data.filtered.In6)
+
+filter.In6 <- rowSums(assay(sce.In6)) >= 50
+table(filter.In6)
+sce.In6 <- sce.In6[filter.In6,]
+sce.In6$condition <- factor(sce.In6$condition)
+
+assayNames(sce.In6)[1] <- "counts"
+zinb.In6 <- zinbFit(sce.In6, K=2, epsilon=2000)
+
+
+nms.In6 <- c("counts", setdiff(assayNames(sce.In6), "counts"))
+assays(sce.In6) <- assays(sce.In6)[nms.In6]
+assay(sce.In6) <- as.matrix(assay(sce.In6))
+
+sce_zinb.In6 <- zinbwave(sce.In6, fitted_model = zinb.In6, K = 2, epsilon=2000,
+                         observationalWeights = TRUE)
+
+dds.In6 <- DESeqDataSet(sce_zinb.In6, design = ~ condition)
+
+dds.In6 <- DESeq(dds.In6, sfType="poscounts", useT=TRUE, minmu=1e-6)
+
+res.In6.scz_vs_ctl <- results(dds.In6, contrast=c("condition", "schizo", "control"))
+res.In6.scz_vs_ctl.dat <- data.frame(res.In6.scz_vs_ctl)
+write.csv(res.In6.scz_vs_ctl.dat, file = "In6_scz_vs_ctl.csv")
+
+res.In6.mdd_vs_ctl <- results(dds.In6, contrast=c("condition", "mdd", "control"))
+res.In6.mdd_vs_ctl.dat <- data.frame(res.In6.mdd_vs_ctl)
+write.csv(res.In6.mdd_vs_ctl.dat, file = "In6_mdd_vs_ctl.csv")
+
+res.In6.scz_vs_mdd <- results(dds.In6, contrast=c("condition", "schizo", "mdd"))
+res.In6.scz_vs_mdd.dat <- data.frame(res.In6.scz_vs_mdd)
+write.csv(res.In6.scz_vs_mdd.dat, file = "In6_scz_vs_mdd.csv")
+
+#MAplot
+pdf(file = paste0("MAplot_scz_vs_ctl_In2.pdf"), width = 3, height = 3)
+plotMA(res.In2.scz_vs_ctl, colSig = "red", alpha = 0.05)
+dev.off()
+
+pdf(file = paste0("MAplot_mdd_vs_ctl_In2.pdf"), width = 3, height = 3)
+plotMA(res.In2.mdd_vs_ctl, colSig = "red", alpha = 0.05)
+dev.off()
+
+pdf(file = paste0("MAplot_scz_vs_mdd_In2.pdf"), width = 3, height = 3)
+plotMA(res.In2.scz_vs_mdd, colSig = "red", alpha = 0.05)
+dev.off()
+
+
+pdf(file = paste0("MAplot_scz_vs_ctl_In6.pdf"), width = 3, height = 3)
+plotMA(res.In6.scz_vs_ctl, colSig = "red", alpha = 0.05)
+dev.off()
+
+pdf(file = paste0("MAplot_mdd_vs_ctl_In6.pdf"), width = 3, height = 3)
+plotMA(res.In6.mdd_vs_ctl, colSig = "red", alpha = 0.05)
+dev.off()
+
+pdf(file = paste0("MAplot_scz_vs_mdd_In6.pdf"), width = 3, height = 3)
+plotMA(res.In6.scz_vs_mdd, colSig = "red", alpha = 0.05)
+dev.off()
+
+
+#DispEstsplot
+pdf(file = paste0("DispEstsplot_In2.pdf"),width = 8, height = 6)
+print(plotDispEsts(dds.In2))
+dev.off()
+
+pdf(file = paste0("DispEstsplot_In6.pdf"),width = 8, height = 6)
+print(plotDispEsts(dds.In6))
+dev.off()
+
+
+
+#box plot
+pdf(file = paste0("boxplot_In2_normalised_counts.pdf"),width = 10, height = 6)
+par(cex.axis=0.4)
+print(boxplot(log10(assays(dds.In2)[["cooks"]]), range=0, las=2, col = "orange"))
+dev.off()
+
+pdf(file = paste0("boxplot_In6_normalised_counts.pdf"),width = 10, height = 6)
+par(cex.axis=0.4)
+print(boxplot(log10(assays(dds.In6)[["cooks"]]), range=0, las=2, col = "orange"))
+dev.off()
+
+
+# Normalised counts
+count_In2 <- counts(dds.In2, normalized=TRUE)
+count_In2.dat <- data.frame(count_In2)
+write.csv(count_In2.dat, file = "normalised_counts_In2.csv")
+
+count_In6 <- counts(dds.In6, normalized=TRUE)
+count_In6.dat <- data.frame(count_In6)
+write.csv(count_In6.dat, file = "normalised_counts_In6.csv")
+
+
+
