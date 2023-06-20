@@ -1,0 +1,335 @@
+This analysis focuses on upstream analysis of scRNAseq data including pre-processing, pre-filtering, QC, removeing doublets, PCA and UMAP using R and is run on HPC
+
+Step 1: set up bash codes to run on HPC
+
+#!/bin/bash
+
+
+#SBATCH --job-name="scrna.analysis_complete_3"
+#SBATCH --mail-user=wittaya.hpc.cluster@gmail.com
+#SBATCH --mail-type=ALL
+#SBATCH --ntasks=4
+#SBATHC --ntasks-per-node=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem-per-cpu=25G
+#SBATCH --partition=short
+#SBATCH --nodes=4
+#SBATCH --time=23:59:59
+#SBATCH --output=scrna.analysis_complete_3.out
+
+date
+
+module load R/4.0.5
+cd ~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/
+Rscript --vanilla scrna.analysis_complete_3.R
+
+####end
+
+Step 2: Pre-processing step
+#### noting that we will save all the R codes in a file called 'scrna.analysis_complete_3.R'
+
+###load libraries
+library(DoubletFinder)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(scCATCH)
+library(rliger)
+library(HGNChelper)
+
+PMT.files <- list.files(path="~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/rawdata")
+PMT.files <- mixedsort(PMT.files)
+PMT.dir <- list(paste0("~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/rawdata/",PMT.files,"/filtered_feature_bc_matrix"))
+
+data.list <- list()
+for (i in PMT.files) {
+data.list[[i]] <- Read10X(data.dir = paste0("~/rb32/wsuw0002/snrna_postmortem/down.stream.analysis/rawdata/",i,"/filtered_feature_bc_matrix"))
+}
+
+object.list <- list()
+for (i in 1:length(data.list)) {
+  object.list[[i]] <- CreateSeuratObject(counts = data.list[[i]], project = PMT.files[[i]], min.cells = 3, min.features = 200);
+  object.list[[i]][["percent.mt"]] <- PercentageFeatureSet(object.list[[i]], pattern = "^MT-")
+}
+names(object.list) <- PMT.files
+
+for(i in 1:length(object.list)) {
+  pdf(paste0(PMT.files[[i]],"_pre.data.pdf"))
+  p = VlnPlot(object.list[[i]], features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+  print(p + ggtitle(paste0(PMT.files[[i]])))
+  dev.off()
+}
+
+metadata <- list()
+for (i in PMT.files) {
+  metadata[[i]] <- data.frame(object.list[[i]]@meta.data)
+  write.csv(metadata[[i]], file = paste0(i,"_meta.data.csv"))
+}
+
+for (i in PMT.files) {
+  pdf(file = paste0(i,"_nCount.nFeature.pdf"))
+  print(FeatureScatter(object.list[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA"))
+  dev.off()
+}
+
+
+#######Step 3: Pre-filtering
+
+filter.list <- list()
+for (i in PMT.files) {
+  filter.list[[i]] <- subset(object.list[[i]], subset = nFeature_RNA > 200 & percent.mt < 5)
+  filter.list[[i]] <- NormalizeData(filter.list[[i]], normalization.method = "LogNormalize", scale.factor = 10000)
+  filter.list[[i]] <- FindVariableFeatures(filter.list[[i]], selection.method = "vst", nfeatures = 2000)
+  top50 <- head(VariableFeatures(filter.list[[i]]), 50)
+
+  pdf(file = paste0(i,"_top50.genes.pdf"))
+  print(LabelPoints(plot = VariableFeaturePlot(filter.list[[i]]), points = top50, repel = TRUE))
+  dev.off()
+
+  all.genes <- rownames(filter.list[[i]])
+  filter.list[[i]] <- ScaleData(filter.list[[i]], features = all.genes)
+  filter.list[[i]] <- RunPCA(filter.list[[i]], features = VariableFeatures(object = filter.list[[i]]))
+  filter.list[[i]] <- FindNeighbors(filter.list[[i]], dims = 1:20)
+  filter.list[[i]] <- FindClusters(filter.list[[i]], resolution = 0.5)
+  filter.list[[i]] <- FindNeighbors(filter.list[[i]], dims = 1:20)
+  filter.list[[i]] <- FindClusters(filter.list[[i]], resolution = 0.5)
+  filter.list[[i]] <- RunUMAP(filter.list[[i]], dims = 1:20)
+  filter.list[[i]] <- RunTSNE(filter.list[[i]], dims = 1:20)
+
+  pdf(file = paste0(i,"_topgenes.in.PC1-2.pdf"))
+  print(VizDimLoadings(filter.list[[i]], dims = 1:2, reduction = "pca"))
+  dev.off()
+
+  pdf(file = paste0(i,"_PC1-2.pdf"))
+  print(DimPlot(filter.list[[i]], reduction = "pca"))
+  dev.off()
+
+  filter.list[[i]] <- JackStraw(filter.list[[i]], num.replicate = 100)
+  filter.list[[i]] <- ScoreJackStraw(filter.list[[i]], dims = 1:20)
+
+  pdf(file = paste0(i,"_JackStraw.plot.pdf"))
+  print(JackStrawPlot(filter.list[[i]], dims = 1:20))
+  dev.off()
+
+  pdf(file = paste0(i,"_Elbow.plot.pdf"))
+  print(ElbowPlot(filter.list[[i]]))
+  dev.off()
+}
+
+########Step4: identify and remove doublets & multiplets
+
+#DoubletFinder
+pK.list <- list()
+for (i in 1:length(filter.list)){
+  pK.list[[i]] <- paramSweep_v3(filter.list[[i]], PCs = 1:20, sct = FALSE)
+  pK.list[[i]] <- summarizeSweep(pK.list[[i]], GT = FALSE)
+  pK.list[[i]] <- find.pK(pK.list[[i]])
+}
+names(pK.list) <- PMT.files
+
+pK.max.list <- list()
+for (i in 1:length(pK.list)){
+  pK.max.list[[i]] <- pK.list[[i]][which.max(pK.list[[i]]$BCmetric),]
+  pK.max.list[[i]] <- pK.max.list[[i]]$pK
+  pK.max.list[[i]] <- as.numeric(levels(pK.max.list[[i]]))[pK.max.list[[i]]]
+  head(pK.max.list[[i]])
+}
+names(pK.max.list) <- PMT.files
+
+expected.cell.list <- list()
+expected.cell.list <- list(
+  0.061,
+  0.122,
+  0.122)
+names(expected.cell.list) <- PMT.files
+#####noting that the list of excepted.cell.list must in the exact same number as number of samples
+
+
+# define the expected number of doublet cells.
+for (i in 1:length(filter.list)) {
+  nExp <- round(ncol(filter.list[[i]]) * expected.cell.list[[i]])
+  filter.list[[i]] <- doubletFinder_v3(filter.list[[i]], pN = 0.25, pK = pK.max.list[[i]], nExp = nExp, PCs = 1:20)
+}
+
+for (i in 1:length(filter.list)) {
+  homotypic.doublet <- modelHomotypic(filter.list[[i]]@meta.data$seurat_clusters)
+  nExp_poi <- round(expected.cell.list[[i]]*nrow(filter.list[[i]]@meta.data))
+  nExp_poi.adj <- round(nExp_poi*(1-homotypic.doublet))
+  filter.list[[i]] <- doubletFinder_v3(filter.list[[i]], pN = 0.25, pK = pK.max.list[[i]], nExp = nExp_poi.adj,
+                                       PCs = 1:20, sct = FALSE, reuse.pANN = FALSE)
+}
+
+DF.name.list <- list()
+for (i in 1:length(filter.list)) {
+  DF.name.list[[i]] <- colnames(filter.list[[i]]@meta.data)[10]
+}
+DF.name.list
+names(DF.name.list) <- PMT.files
+
+for (i in PMT.files) {
+  pdf(file = paste0(i,"_doublet.plot_1.pdf"))
+  print(cowplot::plot_grid(ncol = 2, DimPlot(filter.list[[i]], group.by = "orig.ident", reduction = "umap") + NoAxes(),
+                           DimPlot(filter.list[[i]], group.by = DF.name.list[[i]]) + NoAxes()))
+  dev.off()
+
+  pdf(file = paste0(i,"_doublet.plot_2.pdf"))
+  print(VlnPlot(filter.list[[i]], features = "nFeature_RNA", group.by = DF.name.list[[i]], pt.size = 0.1))
+  dev.off()
+
+  pdf(file = paste0(i,"_doublet.plot_3.pdf"))
+  print(VlnPlot(filter.list[[i]], features = "nCount_RNA", group.by = DF.name.list[[i]], pt.size = 0.1))
+  dev.off()
+}
+
+
+for (i in PMT.files) {
+  data.filt_singlet = filter.list[[i]][, filter.list[[i]]@meta.data[, DF.name.list[[i]]] == "Singlet"]
+  dim(data.filt_singlet)
+  data.filt_singlet = data.filt_singlet@active.ident
+  write.csv(data.filt_singlet, file = paste0(i,"_singlets.csv"), row.names = TRUE)
+
+  data.filt_doublet = filter.list[[i]][, filter.list[[i]]@meta.data[, DF.name.list[[i]]] == "Doublet"]
+  dim(data.filt_doublet)
+  data.filt_doublet = data.filt_doublet@active.ident
+  write.csv(data.filt_doublet, file = paste0(i,"_doublets.csv"), row.names = TRUE)
+}
+
+
+for (i in 1:length(filter.list)) {
+  colnames(filter.list[[i]]@meta.data)[10] <- "multiplet"
+}
+
+#filter doulbets out
+for (i in 1:length(filter.list)) {
+  filter.list[[i]] <- subset(filter.list[[i]], subset = multiplet == 'Singlet')
+  filter.list[[i]] <- ScaleData(filter.list[[i]], features = all.genes)
+  filter.list[[i]] <- RunPCA(filter.list[[i]], features = VariableFeatures(object = filter.list[[i]]))
+  filter.list[[i]] <- FindNeighbors(filter.list[[i]], dims = 1:20)
+  filter.list[[i]] <- FindClusters(filter.list[[i]], resolution = 0.5)
+  filter.list[[i]] <- RunUMAP(filter.list[[i]], dims = 1:20)
+  filter.list[[i]] <- RunTSNE(filter.list[[i]], dims = 1:20)
+}
+
+for (i in PMT.files) {
+  pdf(file = paste0(i,"_umap.pdf"))
+  print(DimPlot(filter.list[[i]], reduction = "umap", label = TRUE))
+  dev.off()
+  pdf(file = paste0(i,"_tsne.pdf"))
+  print(DimPlot(filter.list[[i]], reduction = "tsne", label = TRUE))
+  dev.off()
+}
+
+#######Step 5: find markers for each cluster
+
+marker.filter.list <- list()
+for (i in 1:length(filter.list)) {
+  marker.filter.list[[i]] <- FindAllMarkers(filter.list[[i]], only.pos = TRUE, min.pct = 0.25,
+                                            logfc.threshold = 0.25)
+  marker.filter.list[[i]] %>%
+    group_by(cluster) %>%
+    slice_max(n = 2, order_by = avg_log2FC)
+}
+
+names(marker.filter.list) <- PMT.files
+
+for (i in PMT.files) {
+  write.csv(marker.filter.list[[i]] %>% group_by(marker.filter.list[[i]]$cluster), file = paste0(i,"_export_markers.csv"))
+}
+
+
+
+###Step 6: automatic cell type identification
+
+library(scCATCH)
+library(rliger)
+scCATCH.filter.list <- list()
+for (i in 1:length(filter.list)) {
+  scCATCH.filter.list[[i]] <- filter.list[[i]]@assays[["RNA"]]@counts
+}
+names(scCATCH.filter.list) <- PMT.files
+
+scCATCH.cluster.list <- list()
+for (i in 1:length(filter.list)) {
+  scCATCH.cluster.list[[i]] <- as.character(filter.list[[i]]@active.ident)
+}
+names(scCATCH.cluster.list) <- PMT.files
+
+scCATCH.list <- list()
+for (i in PMT.files) {
+  scCATCH.list[[i]] <- createscCATCH(data = scCATCH.filter.list[[i]], cluster = scCATCH.cluster.list[[i]])
+  scCATCH.list[[i]] <- findmarkergene(object = scCATCH.list[[i]], species = "Human", marker = cellmatch, tissue = "Brain")
+  scCATCH.list[[i]] <- findcelltype(object = scCATCH.list[[i]])
+  write.csv(data.frame(scCATCH.list[[i]]@celltype), file = paste0(i,"_cell.type&gene.markers_scCATCH.csv"))
+}
+
+
+##scType
+# load libraries and functions
+lapply(c("dplyr","Seurat","HGNChelper"), library, character.only = T)
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R"); source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# get cell-type-specific gene sets from our in-built database (DB)
+gs_list <- gene_sets_prepare("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_short.xlsx", "Immune system") # e.g. Immune system, Liver, Pancreas, Kidney, Eye, Brain
+
+# assign cell types
+scRNAseqData <- readRDS(gzcon(url('https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/exampleData.RDS'))); #load example scRNA-seq matrix
+es.max <- sctype_score(scRNAseqData = scRNAseqData, scaled = TRUE, gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# DB file
+db_ <- "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue <- "Brain"
+
+gs_list <- gene_sets_prepare(db_, tissue)
+
+s.max.list <- list()
+scType.cluster.list <- list()
+es.max.cl.list <- list()
+sctype_scores.list <- list()
+for (i in PMT.files) {
+  es.max.list[[i]] <- sctype_score(scRNAseqData = filter.list[[i]][["RNA"]]@scale.data, scaled = TRUE,
+                                   gs = gs_list$gs_positive, gs2 = gs_list$gs_negative)
+  scType.cluster.list[[i]] <- do.call("rbind", lapply(unique(filter.list[[i]]@meta.data$seurat_clusters), function(cl){
+    es.max.cl.list[[i]] <- sort(rowSums(es.max.list[[i]][ ,rownames(filter.list[[i]]@meta.data[filter.list[[i]]@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl.list[[i]]), scores = es.max.cl.list[[i]], ncells = sum(filter.list[[i]]@meta.data$seurat_clusters==cl)), 10)
+  }))
+  sctype_scores.list[[i]] <- scType.cluster.list[[i]] %>% group_by(cluster) %>% top_n(n = 1, wt = scores)
+  sctype_scores.list[[i]]$type[as.numeric(as.character(sctype_scores.list[[i]]$scores)) < sctype_scores.list[[i]]$ncells/4] = "Unknown"
+  write.csv(sctype_scores.list[[i]], file = paste0(i,"_scType.csv"))
+  write.csv(scType.cluster.list[[i]], file = paste0(i,"_scType_All.csv"))
+}
+filter.list[[i]]@meta.data$customclassif = ""
+cl.type.list <- list()
+for (i in PMT.files) {
+  for(j in unique(sctype_scores.list[[i]]$cluster)){
+    cl.type.list[[i]] <- sctype_scores.list[[i]][sctype_scores.list[[i]]$cluster==j,];
+    filter.list[[i]]@meta.data$customclassif[filter.list[[i]]@meta.data$seurat_clusters == j] <- as.character(cl.type.list[[i]]$type[1])
+  }
+}
+
+for (i in PMT.files) {
+  pdf(file <- paste0(i,"_umap_scType.pdf"))
+  print(DimPlot(filter.list[[i]], reduction = "umap", label = TRUE, repel = TRUE, group.by = 'customclassif'))
+  dev.off()
+
+  pdf(file <- paste0(i,"_tsne_scType.pdf"))
+  print(DimPlot(filter.list[[i]], reduction = "tsne", label = TRUE, repel = TRUE, group.by = 'customclassif'))
+  dev.off()
+}
+
+#the end
+
+
+
+
+
+
+
+
+
