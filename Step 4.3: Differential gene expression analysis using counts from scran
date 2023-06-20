@@ -1,0 +1,136 @@
+Step 4.3: Differential gene expression analysis using counts from scran
+
+##### This set of codes focuses on DGE of counts from scran normalisation
+
+library(patchwork)
+library(gtools)
+library(ggplot2)
+library(SeuratDisk)
+library(Seurat)
+library(scater)
+library(tidyverse)
+library(cowplot)
+library(edgeR)
+library(dplyr)
+library(magrittr)
+library(Matrix)
+library(purrr)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(pheatmap)
+library(apeglm)
+library(png)
+library(DESeq2)
+library(RColorBrewer)
+library(scran)
+library(scuttle)
+
+
+sc.data.filtered <- LoadH5Seurat(paste0("~/rb32/wsuw0002/snrna_postmortem/integration/18012023_quick_integration/09012023_integrated.extra.h5Seurat"))
+
+newcelltypes <- c("Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Astrocyte",
+                  "Oligodendrocyte_precursor_cell",
+                  "Microglial_cell",
+                  "Ex2",
+                  "Ex2",
+                  "Ex4",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "Ex2",
+                  "Ex4",
+                  "Astrocyte",
+                  "In6",
+                  "In6",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Ex4",
+                  "In2",
+                  "Ex4",
+                  "Ex4",
+                  "Astrocyte",
+                  "Ex6",
+                  "Ex5",
+                  "In2",
+                  "Astrocyte",
+                  "Microglial_cell",
+                  "Oligodendrocyte",
+                  "In6",
+                  "Endothelial_cell",
+                  "Microglial_cell",
+                  "Microglial_cell",
+                  "Oligodendrocyte_precursor_cell",
+                  "Ex4",
+                  "Ex4",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte",
+                  "Oligodendrocyte")
+
+
+names(newcelltypes) <- levels(sc.data.filtered)                                                                                                                                                                         
+sc.data.filtered <- RenameIdents(sc.data.filtered, newcelltypes)
+sc.data.filtered[["old.ident"]] <- Idents(object = sc.data.filtered)
+
+#set new levels
+my_levels <- c('Astrocyte', 'Endothelial_cell', 'Microglial_cell', 'Oligodendrocyte', 'Oligodendrocyte_precursor_cell', 'Ex2', 'Ex4', 'Ex5', 'Ex6', "In2", 'In6')
+Idents(sc.data.filtered) <- factor(Idents(sc.data.filtered), levels= my_levels)
+
+
+#normalise with scran
+sc.data.filtered.obj <- as.SingleCellExperiment(sc.data.filtered)
+
+
+clusters <- quickCluster(sc.data.filtered.obj)
+sc.data.filtered.obj <- computeSumFactors(sc.data.filtered.obj, clusters=clusters)
+summary(sizeFactors(sc.data.filtered.obj))
+sc.data.filtered.obj <- logNormCounts(sc.data.filtered.obj)
+
+
+
+sc.data.filtered.obj_P <- sc.data.filtered.obj[, sc.data.filtered.obj$newcelltypes %in% "In6"]
+sc.data.filtered.obj_P <- sc.data.filtered.obj_P[, sc.data.filtered.obj_P$condition %in% c("control","schizo","mdd")]
+
+y_P <- convertTo(sc.data.filtered.obj_P, type="DESeq2")
+dds_P <- DESeqDataSet(y_P, design = ~ condition)
+keep_P <- rowSums(counts(dds_P)) >= 50
+dds_P <- dds_P[keep_P, ]
+dds_P <- DESeq(dds_P, sfType="poscounts", useT=TRUE, minmu=1e-6)
+
+res.scz_vs_ctl_P <- results(dds_P, contrast=c("condition", "schizo", "control"))
+res.scz_vs_ctl.dat_P <- data.frame(res.scz_vs_ctl_P)
+write.csv(res.scz_vs_ctl.dat_P, file = "In6_scz_vs_ctl_19_6_23.csv")
+
+
+res.scz_vs_ctl_Q <- results(dds_P, contrast=c("condition", "mdd", "control"))
+res.scz_vs_ctl.dat_Q <- data.frame(res.scz_vs_ctl_Q)
+write.csv(res.scz_vs_ctl.dat_Q, file = "In6_mdd_vs_ctl_19_6_23.csv")
+
+
+res.scz_vs_ctl_R <- results(dds_P, contrast=c("condition", "schizo", "mdd"))
+res.scz_vs_ctl.dat_R <- data.frame(res.scz_vs_ctl_R)
+write.csv(res.scz_vs_ctl.dat_R, file = "In6_scz_vs_mdd_19_6_23.csv")
+
+
+pdf(file = "MAplot_In6_res.scz_vs_ctl.pdf", width = 5, height = 3)                                                                                                 
+print(plotMA(res.scz_vs_ctl_P))                                                                                        
+dev.off()
+
+pdf(file = "MAplot_In6_res.mdd_vs_ctl.pdf", width = 5, height = 3)                                                                                                 
+print(plotMA(res.scz_vs_ctl_Q))                                                                                        
+dev.off()
+
+pdf(file = "MAplot_In6_res.scz_vs_mdd.pdf", width = 5, height = 3)                                                                                                 
+print(plotMA(res.scz_vs_ctl_R))                                                                                        
+dev.off()
+
+
